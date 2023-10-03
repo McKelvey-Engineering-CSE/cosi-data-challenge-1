@@ -4,6 +4,7 @@ import sys
 import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import accelerate
 
 from tqdm.autonotebook import tqdm
 from IPython.display import HTML
@@ -28,7 +29,7 @@ class COSIpy:
         self.dataset = dataset()
 
 
-    def read_COSI_DataSet(self):
+    def read_COSI_DataSet(self, n_events=0):
         """
         Reads in MEGAlib .tra (or .tra.gz) file (self.filename) in given directory (self.data_dir)
         Returns COSI data set as a dictionary of the form
@@ -85,49 +86,10 @@ class COSIpy:
             # measured gal angle psi (lat direction)
             psi_gal = [] 
 
-            # browse through .tra file, select events, and sort into corresponding list
-            while True:
-                # the Reader class from MEGAlib knows where an event starts and ends and
-                # returns the Event object which includes all information of an event
-                Event = Reader.GetNextEvent()
-                if not Event:
-                    break
-                # here only select Compton events (will add Photo events later as optional)
-                
-                # all calculations and definitions taken from:
-                # /MEGAlib/src/response/src/MResponseImagingBinnedMode.cxx
-                    
-                # Total Energy
-                erg.append(Event.Ei())
-                # Time tag in UNIX seconds
-                tt.append(Event.GetTime().GetAsSeconds())
-                # Event type (0 = Compton, 4 = Photo)
-                et.append(Event.GetEventType())
-                # x axis of space craft pointing at GAL latitude
-                latX.append(Event.GetGalacticPointingXAxisLatitude())
-                # x axis of space craft pointing at GAL longitude
-                lonX.append(Event.GetGalacticPointingXAxisLongitude())
-                # z axis of space craft pointing at GAL latitude
-                latZ.append(Event.GetGalacticPointingZAxisLatitude())
-                # z axis of space craft pointing at GAL longitude
-                lonZ.append(Event.GetGalacticPointingZAxisLongitude()) 
-                
-                # note that the y axis can be calculated from the X and Z components
-                # therefore it is not saved, and will be computed further down
-                    
-                if Event.GetEventType() == M.MPhysicalEvent.c_Compton:    
-                    # Compton scattering angle
-                    phi.append(Event.Phi()) 
-                    # data space angle chi (azimuth)
-                    chi_loc.append((-Event.Dg()).Phi())
-                    # data space angle psi (polar)
-                    psi_loc.append((-Event.Dg()).Theta())
-                    # interaction length between first and second scatter in cm
-                    dist.append(Event.FirstLeverArm())
-                    # gal longitude angle corresponding to chi
-                    chi_gal.append((Event.GetGalacticPointingRotationMatrix()*Event.Dg()).Phi())
-                    # gal longitude angle corresponding to chi
-                    psi_gal.append((Event.GetGalacticPointingRotationMatrix()*Event.Dg()).Theta())
+            accelerate.accel_read_COSI_DataSet(Reader, erg, tt, et,
+                            latX, lonX, latZ, lonZ, phi,
+                            chi_loc, psi_loc, dist,
+                            chi_gal, psi_gal, n_events)
                     
             # because everything is built upon numpy arrays later, we will initialise them here
             erg = np.array(erg)
@@ -293,8 +255,8 @@ class COSIpy:
     def plot_lightcurve(self):
         try:
             try:
-                self.dataset.light_curve = [len(self.dataset.data_time_tagged[i]['Indices'])/self.dataset.data_time_tagged[i]['DeltaTime'] for i in range(self.dataset.n_time_bins)]
-                self.dataset.times_bins  = [0] + [self.dataset.data_time_tagged[i]['DeltaTime'] for i in range(self.dataset.n_time_bins)]
+                self.dataset.light_curve = [len(self.dataset.data_time_indices[i])/self.dataset.data_delta_times[i] for i in range(self.dataset.n_time_bins)]
+                self.dataset.times_bins  = [0] + [self.dataset.data_delta_times[i] for i in range(self.dataset.n_time_bins)]
                 self.dataset.times_edges = np.cumsum(self.dataset.times_bins)
                 self.dataset.times_min   = self.dataset.times_edges[0:-1]
                 self.dataset.times_max   = self.dataset.times_edges[1:]
@@ -398,6 +360,58 @@ class dataset(COSIpy):
             print('Data set not read in, use read_COSI_DataSet() first.')
 
 
+            
+    def time_binning_tags_fast(self,time_bin_size=3600,time_binning=None):
+        """
+        Get COSI data reformatted to a data set per time bin.
+        We get rid of the dictionary in favor of two numpy arrays:
+        data_time_indices
+        data_delta_times
+
+        :param: COSI_Data       dictionary from read_COSI_DataSet
+        :param: time_bin_size   equi-sized time intervals to bin select photons in data set
+                                Default: 3600 (in units of seconds)
+        """
+
+        self.init_time_bin_size = time_bin_size
+        
+        # Get number of time bins
+        minTime = np.min(self.data['TimeTags'])
+        maxTime = np.max(self.data['TimeTags'])
+        self.n_time_bins = int(np.ceil((maxTime - minTime)/time_bin_size))
+
+        # Last bin may be shorter
+        # I don't know if this is necessary, but might be useful for plotting
+        self.last_bin_size = maxTime - minTime - (self.n_time_bins - 1) * time_bin_size
+        self.data_delta_times = np.empty(self.n_time_bins)
+
+        # Empty arrays to fill using the accelerated function
+        self.times = TIME()
+        self.times.times_edges = np.empty(self.n_time_bins + 1)
+        self.times.n_ph_t = np.empty(self.n_time_bins)
+        self.times.times_min = np.empty(self.n_time_bins)
+        self.times.times_max = np.empty(self.n_time_bins)
+        self.times.times_cen = np.empty(self.n_time_bins)
+        self.times.times_wid = np.empty(self.n_time_bins)
+
+        # Calculate bin attributes, indices, etc
+        self.data_time_indices = accelerate.accel_time_binning_tags(
+            self.n_time_bins, time_bin_size, self.last_bin_size,
+            self.data['TimeTags'], self.data_delta_times,
+            self.times.times_edges, self.times.n_ph_t,
+            self.times.times_min, self.times.times_max,
+            self.times.times_cen, self.times.times_wid)
+
+        # This is a numpy array of unknown size,
+        # so I don't know if this can be accelerated
+        self.times.n_ph_dx = np.where(self.times.n_ph_t != 0)[0]    
+
+        self.times.n_time_bins = self.n_time_bins
+
+        self.times.n_ph   = len(self.times.n_ph_dx)
+        self.times.total_time  = maxTime - minTime
+
+
 
     def time_binning_tags(self,time_bin_size=3600,time_binning=None):
         """
@@ -421,6 +435,7 @@ class dataset(COSIpy):
         self.last_bin_size = np.diff(minmax(self.data['TimeTags']))[0]-(self.n_time_bins-1)/s2b
 
         self.data_time_tagged = []
+        self.data_time_indices = []
 
         for b in range(self.n_time_bins):
             tdx = np.where( (minmin(self.data['TimeTags'])*s2b >= b) &
@@ -432,6 +447,7 @@ class dataset(COSIpy):
                         'DeltaTime':self.init_time_bin_size if b < self.n_time_bins-1 else self.last_bin_size}
 
             self.data_time_tagged.append(tmp_data)
+            self.data_time_indices.append(np.array(tdx))
 
         self.times = TIME()
         self.times.times_bins  = [0] + [self.data_time_tagged[i]['DeltaTime'] for i in range(self.n_time_bins)]
@@ -528,6 +544,36 @@ class dataset(COSIpy):
 
 
 
+    def get_binned_data_fast(self):
+
+            # init data array
+            self.binned_data = np.zeros((self.times.n_ph,#self.times.n_time_bins,
+                                         self.energies.n_energy_bins,
+                                         self.phis.n_phi_bins,
+                                         self.fisbels.n_fisbel_bins))
+            
+            accelerate.accel_get_binned_data(
+                self.binned_data,
+                self.times.n_ph,
+                self.times.n_ph_dx,
+                self.energies.n_energy_bins,
+                self.fisbels.n_fisbel_bins,
+                self.energies.energy_bin_edges,
+                self.phis.phi_edges,
+                self.fisbels.lon_min,
+                self.fisbels.lon_max,
+                self.fisbels.lat_min,
+                self.fisbels.lat_max,
+                self.data_time_indices,
+                self.data['Phi'],
+                self.data['Psi local'],
+                self.data['Chi local'],
+                self.data['Energies']
+            )
+
+
+
+
     def get_binned_data(self):
         """
         Bin data according to definitions in init_binning()
@@ -548,7 +594,7 @@ class dataset(COSIpy):
                 if self.times.n_ph_t[t] != 0:
                 
                     # use indexed photons for specific time interval
-                    idx_tmp = self.data_time_tagged[t]['Indices']
+                    idx_tmp = self.data_time_indices[t]
 
                     # temporary CDS indexed for time interval
                     phi_tmp = self.data['Phi'][idx_tmp]
@@ -997,7 +1043,7 @@ class Pointing():
         for t in range(dataset.n_time_bins):
 
             # indices for this time bin
-            idx_tmp = dataset.data_time_tagged[t]['Indices']
+            idx_tmp = dataset.data_time_indices[t]
         
             # get number of photons as number of indexed triggers
             n_ph = len(idx_tmp)
@@ -1076,7 +1122,7 @@ class Pointing():
 
                     # append last time segment as delta between time bin edge and 
                     # that was already accounted for
-                save_times.append(dataset.data_time_tagged[t]['DeltaTime']-np.sum(save_times)) 
+                save_times.append(dataset.data_delta_times[t]-np.sum(save_times)) 
 
                 self.xpoins.extend(save_xpoins)
                 self.ypoins.extend(save_ypoins)
