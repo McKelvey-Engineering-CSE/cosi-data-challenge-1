@@ -1,27 +1,6 @@
 import numpy as np
-from astropy.io import fits
-import matplotlib.pyplot as plt
-import astropy.units as u
-import sys
-import time
-import scipy.interpolate as interpol
-import matplotlib
-from matplotlib import ticker, cm
-from scipy.ndimage import gaussian_filter
-from tqdm import tqdm_notebook as tqdm
-import os, glob 
+from numba import njit, prange
 
-import pandas as pd
-
-import ROOT as M
-# Load MEGAlib into ROOT
-M.gSystem.Load("$(MEGAlib)/lib/libMEGAlib.so")
-# Initialize MEGAlib
-G = M.MGlobal()
-G.Initialize()
-
-
-    
 def one_func(x,y,grid=False):
     """Returns an array of ones for any given input array (or scalar) x.
     :param: x       Input array (or scalar, tuple, list)
@@ -98,7 +77,7 @@ def zenaziGrid(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
     :param: src_b      SOURCEgrid latitudes
     
     """
-#     # make matrices for response calculation on a pre-defined grid
+    # make matrices for response calculation on a pre-defined grid
     SCZ_L, SRC_L = np.meshgrid(scz_l,src_l)
     SCZ_B, SRC_B = np.meshgrid(scz_b,src_b)
     # Zenith is the distance from the optical axis (here z)
@@ -126,6 +105,62 @@ def zenaziGrid(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
     
     return theta,phi    
                                                                       
+
+@njit(fastmath=True,parallel=True,nogil=True)
+def zenaziGrid_fast(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
+    """
+    # from spimodfit zenazi function (with rotated axes (optical axis for COSI = z)
+    # calculate angular distance wrt optical axis in zenith (theta) and
+    # azimuth (phi): (zenazi function)
+    # input: spacecraft pointing directions sc(xyz)_l/b; source coordinates src_l/b
+    # output: source coordinates in spacecraft system frame
+    
+    Calculate zenith and azimuth angle of a point (a source) given the orientations
+    of an instrument (or similar) in a certain coordinate frame (e.g. galactic).
+    Each point in galactic coordinates can be uniquely mapped into zenith/azimuth of
+    an instrument/observer/..., by using three Great Circles in x/y/z and retrieving
+    the correct angles
+    
+    :param: scx_l      longitude of x-direction/coordinate
+    :param: scx_b      latitude of x-direction/coordinate
+    :param: scy_l      longitude of y-direction/coordinate
+    :param: scy_b      latitude of y-direction/coordinate
+    :param: scz_l      longitude of z-direction/coordinate
+    :param: scz_b      latitude of z-direction/coordinate
+    :param: src_l      SOURCEgrid longitudes
+    :param: src_b      SOURCEgrid latitudes
+    
+    """
+    scx_l,scx_b = np.deg2rad(scx_l),np.deg2rad(scx_b)
+    scy_l,scy_b = np.deg2rad(scy_l),np.deg2rad(scy_b)
+    scz_l,scz_b = np.deg2rad(scz_l),np.deg2rad(scz_b)
+    src_l,src_b = np.deg2rad(src_l),np.deg2rad(src_b)
+
+    theta = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
+    phi   = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
+
+    for i in prange(src_l.size):
+        for j in range(scx_l.size):
+            costheta = np.sin(scz_b[j]) * np.sin(src_b[i]) + np.cos(scz_b[j]) * np.cos(src_b[i]) * np.cos(scz_l[j] - src_l[i])
+            cosx     = np.sin(scx_b[j]) * np.sin(src_b[i]) + np.cos(scx_b[j]) * np.cos(src_b[i]) * np.cos(scx_l[j] - src_l[i])
+            cosy     = np.sin(scy_b[j]) * np.sin(src_b[i]) + np.cos(scy_b[j]) * np.cos(src_b[i]) * np.cos(scy_l[j] - src_l[i])
+            theta[i,j] = np.rad2deg(np.arccos(costheta))
+            phi[i,j]   = np.rad2deg(np.arctan2(cosx,cosy))
+            if phi[i,j] < 0: phi[i,j] += 360
+    
+    return theta, phi
+
+
+# JITable replacement for np.meshgrid() for 2D grids
+@njit(fastmath=True)
+def mymeshgrid(x, y):
+    xx = np.empty(shape=(y.size, x.size), dtype=x.dtype)
+    yy = np.empty(shape=(y.size, x.size), dtype=y.dtype)
+    for j in range(y.size):
+        for k in range(x.size):
+                xx[j,k] = x[k]
+                yy[j,k] = y[j]
+    return xx, yy
 
 
 def cashstat(data,model):

@@ -1,13 +1,9 @@
 import ROOT as M
 import numpy as np
-import sys
-import os
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 import accelerate
 
-from tqdm.autonotebook import tqdm
-from IPython.display import HTML
+from numba import njit, prange
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -942,7 +938,7 @@ class FISBEL(dataset):
             FixBinArea = 4*np.pi/n_bins
             SquareLength = np.sqrt(FixBinArea)
             
-            n_collars = np.int((np.pi/SquareLength-1)+0.5) + 2
+            n_collars = int((np.pi/SquareLength-1)+0.5) + 2
             # -1 for half one top AND Bottom, 0.5 to round to next integer
             # +2 for the half on top and bottom
             
@@ -966,7 +962,7 @@ class FISBEL(dataset):
             LatitudeBinEdges[n_collars - 1] = np.pi - LatitudeBinEdges[1]
             
             # now iterate over remaining bins
-            for collar in range(1,np.int(np.ceil(n_collars/2))):
+            for collar in range(1,int(np.ceil(n_collars/2))):
                 UnusedLatitude = LatitudeBinEdges[n_collars-collar] - LatitudeBinEdges[collar]
                 UnusedCollars = n_collars - 2*collar
                 
@@ -974,7 +970,7 @@ class FISBEL(dataset):
                 NextBinsEstimate = 2*np.pi * (np.cos(LatitudeBinEdges[collar]) - np.cos(NextEdgeEstimate)) / FixBinArea
                 
                 # roundgind
-                NextBins = np.int(NextBinsEstimate+0.5)
+                NextBins = int(NextBinsEstimate+0.5)
                 NextEdge = np.arccos(np.cos(LatitudeBinEdges[collar]) - NextBins*FixBinArea/2/np.pi)
             
                 # insert at correct position
@@ -997,13 +993,20 @@ class FISBEL(dataset):
         CoordinatePairs = []
         Binsizes = []
         for c in range(n_collars):
-            for l in range(np.int(LongitudeBins[c])):
+            for l in range(int(LongitudeBins[c])):
                 CoordinatePairs.append([np.mean(LatitudeBinEdges[c:c+2]),np.mean(LongitudeBinEdges[c][l:l+2])])
                 Binsizes.append([np.diff(LatitudeBinEdges[c:c+2]),np.diff(LongitudeBinEdges[c][l:l+2])])
      
         return CoordinatePairs,Binsizes
 
-
+def verb(q,text):
+    """
+    Print text of q is True
+    :param:   q (boolean)
+    :param:   text
+    """
+    if q:
+        print(text)
 
         
 class Pointing():
@@ -1097,12 +1100,12 @@ class Pointing():
                 
                         # calculate angular distance in all 3 directions
                         # (very important because non-circular response)
-                        dz = angular_distance(zpoins_tmp[f,0],zpoins_tmp[f,1],
-                                              zpoins_tmp[i,0],zpoins_tmp[i,1])
-                        dy = angular_distance(ypoins_tmp[f,0],ypoins_tmp[f,1],
-                                              ypoins_tmp[i,0],ypoins_tmp[i,1])
-                        dx = angular_distance(xpoins_tmp[f,0],xpoins_tmp[f,1],
-                                              xpoins_tmp[i,0],xpoins_tmp[i,1])
+                        dz = angular_distance_scalar(zpoins_tmp[f,0],zpoins_tmp[f,1],
+                                                     zpoins_tmp[i,0],zpoins_tmp[i,1])
+                        dy = angular_distance_scalar(ypoins_tmp[f,0],ypoins_tmp[f,1],
+                                                    ypoins_tmp[i,0],ypoins_tmp[i,1])
+                        dx = angular_distance_scalar(xpoins_tmp[f,0],xpoins_tmp[f,1],
+                                                     xpoins_tmp[i,0],xpoins_tmp[i,1])
                 
                         # time bin (see warning above, and work-around below)
                         dt = times_tmp[f]-times_tmp[i]
@@ -1424,7 +1427,8 @@ def polar2cart(ra,dec):
     y = np.sin(np.deg2rad(ra)) * np.cos(np.deg2rad(dec))
     z = np.sin(np.deg2rad(dec))
     
-    return np.array([x,y,z])
+    return np.stack((x,y,z))  # JITable alternative
+    #return np.array([x,y,z])
 
 
 def cart2polar(vector):
@@ -1450,25 +1454,30 @@ def construct_scy(scx_l, scx_b, scz_l, scz_b):
     x = polar2cart(scx_l, scx_b)
     z = polar2cart(scz_l, scz_b)
     
+    #return cart2polar(np.cross(z.transpose(),x.transpose()).transpose()) # JITable alternative
     return cart2polar(np.cross(z,x,axis=0))
 
 
-def GreatCircle(l1,b1,l2,b2,deg=True):
+@njit(fastmath=True)
+def angular_distance_scalar(l1,b1,l2,b2):
+    """                                                                                                                                                        
+    Calculate angular distance on a sphere from one longitude/latitude pair to another using Great circle                                                      
+    in units of deg                                                                                                                                            
+    :param: l1    longitude of point 1                                                                                                                         
+    :param: b1    latitude of point 1                                                                                                                          
+    :param: l2    longitude of point 2                                                                                                                         
+    :param: b2    latitude of point 2                                                                                                                          
     """
-    Calculate the Great Circle length on a sphere from longitude/latitude pairs to others
-    in units of rad on a unit sphere
-    :param: l1    longitude of point 1 (or several)
-    :param: b1    latitude of point 1 (or several)
-    :param: l2    longitude of point 2
-    :param: b2    latitude of point 2
-    :option: deg  Default True to convert degree input to radians for trigonometric function use
-                  If False, radian input is assumed
-    """
-    if deg == True:
-        l1,b1,l2,b2 = np.deg2rad(l1),np.deg2rad(b1),np.deg2rad(l2),np.deg2rad(b2)
+    l1,b1,l2,b2 = np.deg2rad(l1),np.deg2rad(b1),np.deg2rad(l2),np.deg2rad(b2)
 
-    return np.sin(b1)*np.sin(b2) + np.cos(b1)*np.cos(b2)*np.cos(l1-l2)
+    # calculate the Great Circle between the two points                                                                                                        
+    # this is a geodesic on a sphere and describes the shortest distance                                                                                       
+    gc = np.sin(b1)*np.sin(b2) + np.cos(b1)*np.cos(b2)*np.cos(l1-l2)
+    if gc > 1.: gc = 1.
+    return np.rad2deg(np.arccos(gc))
 
+
+from COSIpy_tools_dc1 import GreatCircle
 
 def angular_distance(l1,b1,l2,b2,deg=True):
     """
@@ -1494,14 +1503,8 @@ def angular_distance(l1,b1,l2,b2,deg=True):
     return np.rad2deg(np.arccos(gc))
 
 
-def verb(q,text):
-    """
-    Print text of q is True
-    :param:   q (boolean)
-    :param:   text
-    """
-    if q:
-        print(text)
+###################################################
+# Following code doesn't seem to be used in DC1 at all
 
 def circle_on_the_sky(ls,bs,th,n_points=100):
     """
@@ -1549,7 +1552,6 @@ def circle_on_the_sky(ls,bs,th,n_points=100):
     return l_calc,b_calc
 
 
-
 def vector_length(x,y,z):
     """
     Return Euclidean (L2) norm of a 3D vector (or series of vectors in x/y/z coordiantes):
@@ -1559,15 +1561,3 @@ def vector_length(x,y,z):
     :param: z    z value(s)
     """
     return np.sqrt(x**2+y**2+z**2)
-
-
-def find_nearest(array, value):
-    """
-    Find nearest index for value in array (where for non-existent values)
-    :param: array   Input array
-    :param: value   value to search for
-    """
-    array = np.asarray(array)
-    idx = (np.abs(array - value)).argmin()
-    return idx
-

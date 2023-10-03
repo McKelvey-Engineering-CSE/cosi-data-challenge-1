@@ -1,22 +1,14 @@
 import numpy as np
-import sys
-import os
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 from tqdm.autonotebook import tqdm
-from IPython.display import HTML
 
 import warnings
 warnings.filterwarnings('ignore')
 
-import pandas as pd
-from shapely.geometry import Polygon
-from COSIpy_dc1 import FISBEL
 from COSIpy_dc1 import dataset
-from COSIpy_dc1 import GreatCircle
 from COSIpy_dc1 import angular_distance
-from COSIpy_dc1 import find_nearest
+from COSIpy_tools_dc1 import GreatCircle
 
 deg2rad = np.pi/180
 
@@ -603,3 +595,14 @@ def find_grid_indices(zen,azi,zen_bins,azi_bins):
     azi_index = np.argmin(np.abs(azi-azi_bins))
 
     return(zen_index,azi_index)
+
+
+def find_nearest(array, value):
+    """
+    Find nearest index for value in array (where for non-existent values)
+    :param: array   Input array
+    :param: value   value to search for
+    """
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return idx
