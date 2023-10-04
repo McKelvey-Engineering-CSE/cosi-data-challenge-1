@@ -290,9 +290,9 @@ class COSIpy:
         print([thing for thing in dir(self) if not thing.startswith('__') and not np.any(np.isin(list(self.__dict__.keys()),thing))])
 
         
-
-    def init_spi(self):
-        self.spi = SPI()
+    # not used, SPI not defined
+    #def init_spi(self):
+    #    self.spi = SPI()
 
 
 class dataset(COSIpy):
@@ -542,30 +542,24 @@ class dataset(COSIpy):
 
     def get_binned_data_fast(self):
 
-            # init data array
-            self.binned_data = np.zeros((self.times.n_ph,#self.times.n_time_bins,
-                                         self.energies.n_energy_bins,
-                                         self.phis.n_phi_bins,
-                                         self.fisbels.n_fisbel_bins))
-            
-            accelerate.accel_get_binned_data(
-                self.binned_data,
-                self.times.n_ph,
-                self.times.n_ph_dx,
-                self.energies.n_energy_bins,
-                self.fisbels.n_fisbel_bins,
-                self.energies.energy_bin_edges,
-                self.phis.phi_edges,
-                self.fisbels.lon_min,
-                self.fisbels.lon_max,
-                self.fisbels.lat_min,
-                self.fisbels.lat_max,
-                self.data_time_indices,
-                self.data['Phi'],
-                self.data['Psi local'],
-                self.data['Chi local'],
-                self.data['Energies']
-            )
+        self.binned_data = accelerate.accel_get_binned_data(
+            self.times.n_ph,
+            self.times.n_ph_dx,
+            self.energies.n_energy_bins,
+            self.phis.n_phi_bins,
+            self.fisbels.n_fisbel_bins,
+            self.energies.energy_bin_edges,
+            self.phis.phi_edges,
+            self.fisbels.lon_min,
+            self.fisbels.lon_max,
+            self.fisbels.lat_min,
+            self.fisbels.lat_max,
+            self.data_time_indices,
+            self.data['Phi'],
+            self.data['Psi local'],
+            self.data['Chi local'],
+            self.data['Energies']
+        )
 
 
 

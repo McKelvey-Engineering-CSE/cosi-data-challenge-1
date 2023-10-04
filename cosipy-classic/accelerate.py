@@ -64,20 +64,21 @@ def accel_read_COSI_DataSet(Reader, erg, tt, et,
             psi_gal.append((Event.GetGalacticPointingRotationMatrix()*Event.Dg()).Theta())
 
 
-
 @njit(fastmath=True, parallel=True, nogil=True)
-def accel_get_binned_data(binned_data, n_ph, n_ph_dx,
-                          n_energy_bins, n_fisbel_bins,
+def accel_get_binned_data(n_ph, n_ph_dx,
+                          n_energy_bins, n_phi_bins,n_fisbel_bins,
                           energy_bin_edges, phi_edges,
                           lon_min, lon_max, lat_min, lat_max,
                           data_time_tagged_indices,
                           phi, psi, chi, erg) :
     
+    # init data array
+    binned_data = np.empty((n_ph, n_energy_bins,
+                            n_phi_bins, n_fisbel_bins))
 
     # Loop over time bins with events
     for ph_dx in prange(n_ph) :
 
-        
         # get the event indices within this time bin
         idx_tmp = data_time_tagged_indices[n_ph_dx[ph_dx]]
 
@@ -111,8 +112,7 @@ def accel_get_binned_data(binned_data, n_ph, n_ph_dx,
 
                 energy_idx_tmp = np.where((erg_tmp_fisbel >= energy_bin_edges[e]) &
                                         (erg_tmp_fisbel < energy_bin_edges[e+1]))[0]
-                    
-                
+                                    
                 hist_tmp = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)
                 
                 binned_data[ph_dx, e, :, f] = hist_tmp[0]
@@ -121,13 +121,12 @@ def accel_get_binned_data(binned_data, n_ph, n_ph_dx,
             e = n_energy_bins - 1
             energy_idx_tmp = np.where((erg_tmp_fisbel >= energy_bin_edges[e]) &
                                     (erg_tmp_fisbel <= energy_bin_edges[e+1]))[0]
-                
-            
+                            
             binned_data[ph_dx, e, :, f] = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)[0]
 
-x = np.zeros(1).astype(int)
-numba_np_type = numba.typeof(x)
+    return binned_data
 
+            
 @njit(fastmath=True, parallel=True, nogil=True)
 def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
                             TimeTags, data_delta_times,
@@ -137,11 +136,11 @@ def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
 
     s2b = 1./time_bin_size
 
-    # Our list of arrays of indices needs to be initialized with the correct type,
-    # then filled with something trivial to allow access-by-index
-    # instead of appends, which can't be parallelized
-    data_time_indices = List.empty_list(numba_np_type)
-    data_time_indices = [x] * n_time_bins
+    # create a Numba typed list of integer arrays of known size for
+    # use in the code below, so that we can parallelize writing the
+    # entries rather than being stuck with append(), which is
+    # serialized.
+    data_time_indices = List([np.array([0])] * n_time_bins)
     
     # Shift times so smallest time is 0
     minmin_TimeTags = TimeTags - np.min(TimeTags)
