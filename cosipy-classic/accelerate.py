@@ -74,7 +74,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
     
     # init data array
     binned_data = np.empty((n_ph, n_energy_bins,
-                            n_phi_bins, n_fisbel_bins))
+                            n_phi_bins, n_fisbel_bins), dtype = np.int32)
 
     # Loop over time bins with events
     for ph_dx in prange(n_ph) :
@@ -114,7 +114,6 @@ def accel_get_binned_data(n_ph, n_ph_dx,
                                         (erg_tmp_fisbel < energy_bin_edges[e+1]))[0]
                                     
                 hist_tmp = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)
-                
                 binned_data[ph_dx, e, :, f] = hist_tmp[0]
 
             # Last bin is fully closed
@@ -176,3 +175,55 @@ def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
     data_delta_times[n_time_bins - 1] = last_bin_size
 
     return data_time_indices
+
+
+##############################################################################
+# accelerated kernels for Richardson-Lucy code (with originals for comparison)
+##############################################################################
+
+# This impl copies an entire weighted row of each component img
+# to the target at once, which offers some locality, instead of
+# striding across the images for each pixel.
+@njit(fastmath=True,parallel=True,nogil=True)
+def convolve_fast(D, M, nd_x, nd_y, nm_x, nm_y):
+    R = np.empty((nd_x, nd_y))
+    for c in prange(nd_x):
+        R[c,:] = 0.
+        for i in range(nm_x):
+            for j in range(nm_y):
+                R[c,:] += D[c,i,j,:] * M[i,j]
+    return R
+
+# D is n_dx * n_dy images of size n_mx * n_my
+# W is a weight matrix of size n_mx * n_my
+# output R is an n_dx * n_dy matrix, with each entry (i,j) a 
+# weighted sum of the (i,j)th pixel across all images
+def convolve(D, M, nd_x, nd_y, nm_x, nm_y):
+    R = np.zeros((nd_x, nd_y))
+    for i in range(nm_x):
+        for j in range(nm_y):
+            R += D[:,i,j,:] * M[i,j]
+    return R
+    
+# This is a straightforward translation of the existing code
+@njit(fastmath=True,parallel=True,nogil=True)
+def convdelta_fast(D, W, n_dx, n_dy, n_wx, n_wy):
+    R = np.empty((n_dx, n_dy))
+    for c in prange(n_dx):
+        R[c,:] = 0.
+        for i in range(n_wx):
+            for d in range(n_dy):
+                for j in range(n_wy):
+                   R[c,d] += D[i,c,d,j] * W[i,j]
+    return R
+
+# D is n_dx * n_dy images of size n_wx * n_wy
+# W is a weight matrix of size n_wx * n_wy
+# output R is an n_dx * n_dy matrix, with each entry (p,q) a 
+# weighted sum of pixels in image (p,q)
+def convdelta(D, W, n_dx, n_dy, n_wx, n_wy):
+    R = np.zeros((n_dx, n_dy))
+    for i in range(n_wx):
+        for j in range(n_wy):
+            R += D[i,:,:,j] * W[i,j]
+    return R

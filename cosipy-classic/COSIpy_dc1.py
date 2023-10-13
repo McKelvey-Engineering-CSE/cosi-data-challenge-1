@@ -575,7 +575,7 @@ class dataset(COSIpy):
             self.binned_data = np.zeros((self.times.n_ph,#self.times.n_time_bins,
                                          self.energies.n_energy_bins,
                                          self.phis.n_phi_bins,
-                                         self.fisbels.n_fisbel_bins))
+                                         self.fisbels.n_fisbel_bins), dtype=int)
 
             ph_dx = 0
 
@@ -735,17 +735,19 @@ class dataset(COSIpy):
             else:
                 
                 if mode == 'total':
-                    self.energies.energy_spec_data = np.sum(self.binned_data,axis=(0,2,3)).reshape(1,self.energies.n_energy_bins)
-                    #self.times.total_time = np.sum(self.times.times_wid*2)
-                    self.energies.energy_spec_data /= self.times.total_time
+                    self.energies.energy_spec_data = \
+                      np.sum(self.binned_data,axis=(0,2,3)).reshape(1,self.energies.n_energy_bins) /  \
+                     self.times.total_time
                 elif mode == 'all':
-                    self.energies.energy_spec_data = np.sum(self.binned_data,axis=(2,3))
-                    self.energies.energy_spec_data /= (self.times.times_wid[:,None]*2)
+                    self.energies.energy_spec_data = \
+                      np.sum(self.binned_data,axis=(2,3)) /  \
+                      (self.times.times_wid[:,None]*2)
                 else:
                     print('Plotting spectrum for time bin number '+str(mode))
-                    self.energies.energy_spec_data = np.sum(self.binned_data,axis=(2,3))[mode,:].reshape(1,self.energies.n_energy_bins)
-                    self.energies.energy_spec_data /= (self.times.times_wid[mode]*2)
-
+                    self.energies.energy_spec_data =  \
+                      np.sum(self.binned_data,axis=(2,3))[mode,:].reshape(1,self.energies.n_energy_bins) /  \
+                      (self.times.times_wid[mode]*2)
+                
                 self.energies.energy_spec_data /= self.energies.energy_bin_wid
                 self.energies.energy_spec_data /= 2 # 2 for half bin widths
     

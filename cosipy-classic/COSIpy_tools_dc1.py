@@ -163,7 +163,7 @@ def mymeshgrid(x, y):
     return xx, yy
 
 
-def cashstat(data,model):
-    return -2*np.sum(data*np.log(model)-model-(data*np.nan_to_num(np.log(data))-data))
+def cashstat(data, model):
+    return -2*np.sum(data*np.log(model)-model-(data*np.nan_to_num(np.log(data))-data), axis=None)
 
 
