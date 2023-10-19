@@ -191,7 +191,8 @@ def convolve_fast(D, M, nd_x, nd_y, nm_x, nm_y):
         R[c,:] = 0.
         for i in range(nm_x):
             for j in range(nm_y):
-                R[c,:] += D[c,i,j,:] * M[i,j]
+                for d in range(nd_y):
+                    R[c,d] += D[c,i,j,d] * M[i,j]
     return R
 
 # D is n_dx * n_dy images of size n_mx * n_my
@@ -205,13 +206,13 @@ def convolve(D, M, nd_x, nd_y, nm_x, nm_y):
             R += D[:,i,j,:] * M[i,j]
     return R
     
-# This is a straightforward translation of the existing code
+# Iterate in the storage order of the large D matrix
+# for maximum locality.
 @njit(fastmath=True,parallel=True,nogil=True)
 def convdelta_fast(D, W, n_dx, n_dy, n_wx, n_wy):
-    R = np.empty((n_dx, n_dy))
-    for c in prange(n_dx):
-        R[c,:] = 0.
-        for i in range(n_wx):
+    R = np.zeros((n_dx, n_dy))
+    for i in prange(n_wx):
+        for c in prange(n_dx):
             for d in range(n_dy):
                 for j in range(n_wy):
                    R[c,d] += D[i,c,d,j] * W[i,j]
