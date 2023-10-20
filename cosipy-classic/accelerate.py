@@ -207,12 +207,14 @@ def convolve(D, M, nd_x, nd_y, nm_x, nm_y):
     return R
     
 # Iterate in the storage order of the large D matrix
-# for maximum locality.
-@njit(fastmath=True,parallel=True,nogil=True)
+# for maximum locality.  Do NOT enable fastmath -- this
+# is a very large sum, and parallelizing substantially
+# changes the result.
+@njit(parallel=True,nogil=True)
 def convdelta_fast(D, W, n_dx, n_dy, n_wx, n_wy):
     R = np.zeros((n_dx, n_dy))
-    for i in prange(n_wx):
-        for c in prange(n_dx):
+    for c in prange(n_dx):
+        for i in range(n_wx):
             for d in range(n_dy):
                 for j in range(n_wy):
                    R[c,d] += D[i,c,d,j] * W[i,j]
