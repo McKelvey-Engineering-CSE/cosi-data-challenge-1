@@ -1,4 +1,8 @@
+import os
+import sparse
 import numpy as np
+import jax.numpy as jnp
+from numba import jit, njit
 import matplotlib.pyplot as plt
 
 from tqdm.autonotebook import tqdm
@@ -44,45 +48,52 @@ class SkyResponse:
             if not keep_everything:
                 self.ReduceToImportantParts()
 
-
     def CDS_Summed_Response(self):
 
-        self.rsp.ZA_energy_response = 0
-        
         if self.n_e == 1:
 
             print('You probably used a line response, there is no RMF.')
 
+            self.rsp.ZA_energy_response = 0
+
         elif self.n_e > 1:
             
-        #log.info('Creating general RMF matrices, stay tuned.')
+            #log.info('Creating general RMF matrices, stay tuned.')
             print('Creating general RMF matrices.')
             # sum over CDS (phi and psi/chi) axis 2 and 3 of matrix:
             # this allows quicker weightings for the RMF later
 
-            for i in tqdm(range(self.rsp.phis.n_phi_bins),'Loop over phi bins:'):
-                self.rsp.ZA_energy_response += np.sum(self.rsp.response_grid_normed[:,:,i,:,:,:],2)
+            M = 0
+
+            #for i in range(self.rsp.phis.n_phi_bins):
+            M = sparse.COO.sum(self.rsp.response_grid_normed,(2,3))
+
+            self.rsp.ZA_energy_response = sparse.COO.todense(M)   
 
         else:
             print('This should not happen.')
-                
+
+           
         print('Done.\n')
 
-        
+ 
+
     def ReduceToImportantParts(self):
 
         # for IRF, sum over initial energies (axis 4 if not reduced data space)
         print('Creating general IRF.')
         
         if self.n_e == 1:
-            self.rsp.response_grid_normed_efinal = np.copy(self.rsp.response_grid_normed)
+            M = self.rsp.response_grid_normed
 
         # multiple energy bins:
         elif self.n_e > 1:
-            self.rsp.response_grid_normed_efinal = np.sum(self.rsp.response_grid_normed,axis=4)
+            M = sparse.COO.sum(self.rsp.response_grid_normed,axis=4) # np.sum(self.rsp.response_grid_normed,axis=4)
 
         else:
             print('This should not happen, did you read in a response file?')
+
+        self.rsp.response_grid_normed_efinal = sparse.COO.todense(M)
 
         print('Done.\n')
 
@@ -99,10 +110,12 @@ class SkyResponse:
 
     def LoadRegularBinnedMEGAlibResponse(self):
 
+        basename, ext = os.path.splitext(self.filename)
+        
         try:
+            self.rsp.response_grid_normed = sparse.load_npz(basename + "_grid" + ext)    
 
-            with np.load(self.filename) as content:
-                self.rsp.response_grid_normed = content['ResponseGrid']
+            with np.load(basename + "_rest" + ext) as content:
                 self.e_cen = content['e_cen']
                 self.e_wid = content['e_wid']
                 self.e_edges = content['e_edges']
