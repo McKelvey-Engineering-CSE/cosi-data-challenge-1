@@ -7,7 +7,6 @@ corner==2.2.1
 jupyter 
 ipywidgets
 astropy
-#pystan==2.19.1.1
 matplotlib
 numpy==1.23
 numba
