@@ -231,3 +231,28 @@ def convdelta(D, Wnum, Wden, n_dx, n_dy, n_wx, n_wy):
         for j in range(n_wy):
             R += D[i,:,:,j] * W[i,j]
     return R
+
+# mostly loop-nested version of expo map computation.
+@njit(fastmath=True,parallel=True,nogil=True)
+def emap_fast(response, n_b, n_l):
+    expo_map = np.empty((n_b, n_l))
+    n_i = response.shape[0]
+    n_j = response.shape[3]
+
+    for x in prange(n_b):
+        for y in range(n_l):
+            expo_map[x,y] = 0
+            for i in range(n_i):
+                for j in range(n_j):
+                    expo_map[x,y] += response[i,x,y,j]
+                
+    return expo_map
+
+# original expo_map computation
+def emap(response, n_b, n_l):
+    expo_map = np.zeros((n_b, n_l))
+
+    for i in range(response.shape[0]):
+        expo_map += np.sum(response[i,:,:,:], axis=2)
+    return expo_map
+ 
