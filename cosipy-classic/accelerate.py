@@ -11,21 +11,14 @@ def accel_read_COSI_DataSet(Reader, erg, tt, et,
                             chi_gal, psi_gal, n_events) :
     
     # browse through .tra file, select events, and sort into corresponding list
-    n_event = 0
     while True:
         # the Reader class from MEGAlib knows where an event starts and ends and
         # returns the Event object which includes all information of an event
         Event = Reader.GetNextEvent()
         if not Event:
             break
+        M.SetOwnership(Event,True)  # make sure event is deleted when we are done with it
 
-        #if n_event%10000 == 0 :
-        #    print("Reading event", n_event)
-
-        if n_events > 0 and n_event == n_events :
-             return
-        n_event = n_event+1
-        
         # here only select Compton events (will add Photo events later as optional)
 
         # all calculations and definitions taken from:
@@ -52,16 +45,21 @@ def accel_read_COSI_DataSet(Reader, erg, tt, et,
         if Event.GetEventType() == M.MPhysicalEvent.c_Compton:    
             # Compton scattering angle
             phi.append(Event.Phi()) 
+
+            v = -Event.Dg()
             # data space angle chi (azimuth)
-            chi_loc.append((-Event.Dg()).Phi())
+            chi_loc.append(v.Phi())
             # data space angle psi (polar)
-            psi_loc.append((-Event.Dg()).Theta())
+            psi_loc.append(v.Theta())
+            
             # interaction length between first and second scatter in cm
             dist.append(Event.FirstLeverArm())
+
             # gal longitude angle corresponding to chi
-            chi_gal.append((Event.GetGalacticPointingRotationMatrix()*Event.Dg()).Phi())
+            v = Event.GetGalacticPointingRotationMatrix()*Event.Dg()
+            chi_gal.append(v.Phi())
             # gal longitude angle corresponding to chi
-            psi_gal.append((Event.GetGalacticPointingRotationMatrix()*Event.Dg()).Theta())
+            psi_gal.append(v.Theta())
 
 
 @njit(fastmath=True, parallel=True, nogil=True)

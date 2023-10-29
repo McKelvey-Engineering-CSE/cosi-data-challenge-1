@@ -25,7 +25,7 @@ class COSIpy:
         self.dataset = dataset()
 
 
-    def read_COSI_DataSet(self, n_events=0):
+    def read_COSI_DataSet(self):
         """
         Reads in MEGAlib .tra (or .tra.gz) file (self.filename) in given directory (self.data_dir)
         Returns COSI data set as a dictionary of the form
@@ -85,7 +85,7 @@ class COSIpy:
             accelerate.accel_read_COSI_DataSet(Reader, erg, tt, et,
                             latX, lonX, latZ, lonZ, phi,
                             chi_loc, psi_loc, dist,
-                            chi_gal, psi_gal, n_events)
+                            chi_gal, psi_gal)
                     
             # because everything is built upon numpy arrays later, we will initialise them here
             erg = np.array(erg)
@@ -1493,7 +1493,7 @@ class BG():
         self.Ncuts = len(np.unique(self.bg_cuts))
         self.idx_arr = np.ones(self.n_time_bins)
         for i in range(self.Ncuts):
-            self.idx_arr[np.where(self.bg_cuts == cuts[i])[0]] = i+1
+            self.idx_arr[np.where(self.bg_cuts == cuts[i])[0]] = i  # for Python objective; i+1 for Stan
 
         self.bg_cuts = self.bg_cuts.astype(int)
         self.idx_arr = self.idx_arr.astype(int)
