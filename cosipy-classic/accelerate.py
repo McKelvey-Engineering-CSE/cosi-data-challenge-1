@@ -209,7 +209,9 @@ def convolve(D, M, nd_x, nd_y, nm_x, nm_y):
 # is a very large sum, and parallelizing substantially
 # changes the result.
 @njit(parallel=True,nogil=True)
-def convdelta_fast(D, W, n_dx, n_dy, n_wx, n_wy):
+def convdelta_fast(D, Wnum, Wden, n_dx, n_dy, n_wx, n_wy):
+    W = Wnum/Wden - 1.
+
     R = np.zeros((n_dx, n_dy))
     for c in prange(n_dx):
         for i in range(n_wx):
@@ -222,7 +224,8 @@ def convdelta_fast(D, W, n_dx, n_dy, n_wx, n_wy):
 # W is a weight matrix of size n_wx * n_wy
 # output R is an n_dx * n_dy matrix, with each entry (p,q) a 
 # weighted sum of pixels in image (p,q)
-def convdelta(D, W, n_dx, n_dy, n_wx, n_wy):
+def convdelta(D, Wnum, Wden, n_dx, n_dy, n_wx, n_wy):
+    W = Wnum/Wden - 1.
     R = np.zeros((n_dx, n_dy))
     for i in range(n_wx):
         for j in range(n_wy):

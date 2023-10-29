@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, vectorize
 
 def one_func(x,y,grid=False):
     """Returns an array of ones for any given input array (or scalar) x.
@@ -163,7 +163,15 @@ def mymeshgrid(x, y):
     return xx, yy
 
 
+# Accelerated version of cashstat() log likelihood computation
+@vectorize(['float64(float64, float64)'], nopython=True)
+def xlog(d,m):
+    return 0. if d == 0 else (d * (1. + np.log(m/d)))
+
+@njit
 def cashstat(data, model):
-    return -2*np.sum(data*np.log(model)-model-(data*np.nan_to_num(np.log(data))-data), axis=None)
+    data = data.ravel()
+    model = model.ravel()
+    return -2 * np.sum(xlog(data, model) - model)
 
 
