@@ -123,7 +123,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
 
     return binned_data
 
-            
+
 @njit(fastmath=True, parallel=True, nogil=True)
 def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
                             TimeTags, data_delta_times,
@@ -173,6 +173,98 @@ def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
     data_delta_times[n_time_bins - 1] = last_bin_size
 
     return data_time_indices
+
+
+@njit(fastmath=True,parallel=True,nogil=True)
+def get_image_response_from_pixelhit_general(Response, zenith, azimuth, cdtpoins, times_min, 
+                                             domega, dt, n_hours, n_ph_dx, binsize=6, cut=90,
+                                             altitude_correction=False, al=None):
+    """
+    Get Compton response from hit pixel for each zenith/azimuth vector(!) input.
+    Binsize determines regular(!!!) sky coordinate grid in degrees.
+
+    :param: zenith        Zenith positions of all points of predefined sky grid with
+                          respect to the instrument (in deg)
+    :param: azimuth       Azimuth positions of all points of predefined sky grid with
+                          respect to the instrument (in deg)
+    :param: domega        Latitude weighting of pixels on sky grid
+    :option: binsize      Default 6 deg (matching the sky dimension of the response). If set
+                          differently, make sure it matches the sky dimension as otherwise,
+                          false results may be returned
+    :option: cut          Threshold to cut the response calculation after a certain zenith angle.
+                          Default 90
+    :param: n_hours       Number of hours in cdxervation
+    :option: altitude_correction Default False: use interpolated transmission probability, normalised to 33 km and 500 keV,
+                          to modify number of expected photons as a function of altitude and zenith angle of cdxervation
+    :option: al           Altitude values according to dt from construct_pointings(); used of altitude_correction is set to True
+
+    Input assumptions:
+     - cdtpoins is sorted in nondecreasing order, as it results from a cumsum() call in the dataset construction code.
+     - times_min and times_max are lower and upper endpoints of time bins for Pointing data. Hence, times_max[i] = times_min[i+1].
+     - n_ph_dx gives the indices of the time bins with > 0 data items to be processed in the loop.  There are n_hours such nonempty bins.
+    """
+
+    # assuming useful input:
+    # azimuthal angle is periodic in the range [0,360[
+    # zenith ranges from [0,180[
+  
+    zens = np.floor(zenith/binsize).astype(np.int32)
+    azis = np.floor(azimuth/binsize).astype(np.int32)
+        
+    n_l = int(360/binsize)
+    n_b = int(180/binsize)
+    
+    n_z = zenith.shape[2]
+
+    # take care of regular grid by applying weighting with latitude 
+    weights = domega.repeat(n_z).reshape(n_b, n_l, n_z) * dt
+    
+    # remove zeniths for which the pixel center is above the threshold
+    # (this line rewritten to work with Numba JIT)
+    weights = np.where(zens > cut/binsize - 0.5, 0., weights)
+
+    # check for negative indices and remove
+    # NB: zeniths and azimuths are computed by zenazigrid.  The zeniths are outputs of 
+    # arccos() and so lie in the range 0..2pi (before conversionto degrees and pixel IDs, 
+    # which cannot change the sign).  The azimuths are explicitly converted to be non-negative.
+    # So this code is a no-op. - JDB
+    #weights[zens < 0] = 0.
+    #weights[azis < 0] = 0.
+    #zens[zens < 0] = 0
+    #azis[azis < 0] = 0
+    
+    # Not presently used
+    #if altitude_correction == True:
+    #    altitude_response = return_altitude_response()
+    #else:
+    #    altitude_response = one_func
+
+    #
+    # get responses at pixels
+    #
+
+    # Elts associated with jth time bin have values > times_min[j] and <= times_max[j].
+    # But there are no elts with value > times_max[j] and < times_min[j+1].
+    # Hence, indices for jth bin are bmins[j] .. bmins[j+1] - 1, inclusive.
+    bmins = np.searchsorted(cdtpoins, times_min[n_ph_dx], 'right') # least i with value > times_min
+
+    # Add end of cdtpoins array as sentinel to close last bin range.
+    bmins = np.append(bmins, cdtpoins.size)
+
+    image_response = np.empty((n_hours, n_b, n_l, Response.shape[2]), dtype=np.float32)
+
+    for c in prange(n_hours):
+        
+        acc = np.empty(Response.shape[2], dtype=np.float64)
+
+        for LAT in range(n_b):
+            for LON in range(n_l):
+                acc[:] = 0.
+                for v in range(bmins[c], bmins[c+1]):
+                    acc += Response[zens[LAT,LON,v], azis[LAT,LON,v], :] * weights[LAT,LON,v] # accumulate in 64 bits
+                image_response[c,LAT,LON,:] = acc
+
+    return image_response
 
 
 ##############################################################################
@@ -255,4 +347,4 @@ def emap(response, n_b, n_l):
     for i in range(response.shape[0]):
         expo_map += np.sum(response[i,:,:,:], axis=2)
     return expo_map
- 
+
