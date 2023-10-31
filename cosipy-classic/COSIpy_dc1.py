@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import accelerate
 
-from numba import njit, prange
+from numba import njit
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -245,9 +245,6 @@ class COSIpy:
             print('not working here ...')
         
 
-
-
-
     def plot_lightcurve(self):
         try:
             try:
@@ -408,60 +405,6 @@ class dataset(COSIpy):
         self.times.total_time  = maxTime - minTime
 
 
-
-    def time_binning_tags(self,time_bin_size=3600,time_binning=None):
-        """
-        Get COSI data reformatted to a data set per time bin.
-        Output is a dictionary of the form:
-        data = {'Full filename':COSI_Data['Full filename'],
-                'Bin number':b,
-                'Indices':tdx,
-                'DeltaTime':time}
-        :param: COSI_Data       dictionary from read_COSI_DataSet
-        :param: time_bin_size   equi-sized time intervals to bin select photons in data set
-                                Default: 3600 (in units of seconds)
-        """
-
-        self.init_time_bin_size = time_bin_size
-
-        self.n_time_bins = int(np.ceil(np.diff(minmax(self.data['TimeTags']))/self.init_time_bin_size))
-
-        s2b = 1./self.init_time_bin_size
-
-        self.last_bin_size = np.diff(minmax(self.data['TimeTags']))[0]-(self.n_time_bins-1)/s2b
-
-        self.data_time_tagged = []
-        self.data_time_indices = []
-
-        for b in range(self.n_time_bins):
-            tdx = np.where( (minmin(self.data['TimeTags'])*s2b >= b) &
-                            (minmin(self.data['TimeTags'])*s2b <  b+1) )[0]
-
-            tmp_data = {'Full filename':self.data['Full filename'],
-                        'Bin number':b,
-                        'Indices':tdx,
-                        'DeltaTime':self.init_time_bin_size if b < self.n_time_bins-1 else self.last_bin_size}
-
-            self.data_time_tagged.append(tmp_data)
-            self.data_time_indices.append(np.array(tdx))
-
-        self.times = TIME()
-        self.times.times_bins  = [0] + [self.data_time_tagged[i]['DeltaTime'] for i in range(self.n_time_bins)]
-        self.times.n_time_bins = self.n_time_bins
-        self.times.times_edges = np.cumsum(self.times.times_bins)
-        self.times.times_min   = self.times.times_edges[0:-1]
-        self.times.times_max   = self.times.times_edges[1:]
-        self.times.times_cen   = 0.5*(self.times.times_max+self.times.times_min)
-        self.times.times_wid   = 0.5*(self.times.times_max-self.times.times_min)
-
-        self.times.n_ph_t = np.array([len(self.data_time_tagged[i]['Indices']) for i in range(self.times.n_time_bins)])
-        self.times.n_ph_dx = np.where(self.times.n_ph_t != 0)[0]
-        self.times.n_ph   = len(self.times.n_ph_dx)
-        self.times.total_time  = 2*np.sum(self.times.times_wid[self.times.n_ph_dx])
-
-
-
-
     ##########################################
     ## JB May 4, 2022: extend time_binning_tags function to take
     # arbitrary time bins rather than one time bin size
@@ -560,64 +503,6 @@ class dataset(COSIpy):
             self.data['Chi local'],
             self.data['Energies']
         )
-
-
-
-
-    def get_binned_data(self):
-        """
-        Bin data according to definitions in init_binning()
-        """
-
-        try:
-    
-            # init data array
-            self.binned_data = np.zeros((self.times.n_ph,#self.times.n_time_bins,
-                                         self.energies.n_energy_bins,
-                                         self.phis.n_phi_bins,
-                                         self.fisbels.n_fisbel_bins), dtype=int)
-
-            ph_dx = 0
-
-            for t in range(self.times.n_time_bins):
-
-                if self.times.n_ph_t[t] != 0:
-                
-                    # use indexed photons for specific time interval
-                    idx_tmp = self.data_time_indices[t]
-
-                    # temporary CDS indexed for time interval
-                    phi_tmp = self.data['Phi'][idx_tmp]
-                    psi_tmp = self.data['Psi local'][idx_tmp]
-                    chi_tmp = self.data['Chi local'][idx_tmp]
-                    # and energies for indexed time interval
-                    erg_tmp = self.data['Energies'][idx_tmp]
-                    
-                    # because FISBEL is not monotonic in both dimensions, loop over FISBEL bins
-                    for f in range(self.n_fisbel_bins):
-
-                        # select 2D pixel range where photons fall in
-                        fisbel_idx_tmp = np.where((chi_tmp >= self.fisbels.lon_min[f]) &
-                                                  (chi_tmp <  self.fisbels.lon_max[f]) &
-                                                  (psi_tmp >= self.fisbels.lat_min[f]) &
-                                                  (psi_tmp <  self.fisbels.lat_max[f]))[0]
-                        
-                        # multi-D histogramming of the events in energy and phi
-                        tmp_hist = np.histogramdd(np.array([erg_tmp[fisbel_idx_tmp],
-                                                            phi_tmp[fisbel_idx_tmp]]).T,
-                                                  bins=np.array([self.energies.energy_bin_edges,
-                                                                 self.phis.phi_edges]))#,
-
-                        # fill into binned_data array
-                        self.binned_data[ph_dx,:,:,f] = tmp_hist[0]
-                    ph_dx += 1
-
-                    
-        except AttributeError:
-        
-            print('Something is not defined; run init_binning() first')
-
-
 
 
     def bin_for_angles(self,binned_array=None):
@@ -1011,7 +896,7 @@ class Pointing():
     def __init__(self,
                  dataset=None,
                  angle_threshold=5.):
-        self.angle_threshold = angle_threshold
+        self.angle_threshold = np.deg2rad(angle_threshold)
         self.construct_pointings_fast(dataset)
 
     def construct_pointings_fast(self,dataset):
@@ -1022,7 +907,7 @@ class Pointing():
         This defines the exposure time (not dead-time corrected) for a particular pointing.
         TS: need a cleaner pointing definition from ori files (or auxiliary information)
         :param:  COSI_Data.dataset  COSI data set dictionary from read_COSI_DataSet()
-        :option: angle_threshold    Default = 5 (deg): if COSI changes by more than angle_threshold, the accumulation
+        :option: angle_threshold    If COSI changes by more than angle_threshold, the accumulation
                                     of triggers starts over, defining a new pointing.
         
         Output: xpoins,ypoins,zpoins,dtpoins
@@ -1030,10 +915,10 @@ class Pointing():
         TS Warning: there could be something wrong, but i don't see where
         """
     
-        self.xpoins  = []
-        self.ypoins  = []
-        self.zpoins  = []
-        self.dtpoins = []
+        xpoins  = []
+        ypoins  = []
+        zpoins  = []
+        dtpoins = []
 
         #self._n_ph          = []
         #self._n_pointings   = []
@@ -1048,10 +933,10 @@ class Pointing():
             n_ph = len(idx_tmp)
             assert n_ph > 0, "Error (Pointings): time bin with zero triggers"
 
-            # temporary pointing coordinates of indexed events in deg
-            zpoins_tmp = np.rad2deg(dataset.data['Zpointings'][idx_tmp])
-            ypoins_tmp = np.rad2deg(dataset.data['Ypointings'][idx_tmp])
-            xpoins_tmp = np.rad2deg(dataset.data['Xpointings'][idx_tmp])
+            # temporary pointing coordinates of indexed events in RADIANS
+            zpoins_tmp = dataset.data['Zpointings'][idx_tmp]
+            ypoins_tmp = dataset.data['Ypointings'][idx_tmp]
+            xpoins_tmp = dataset.data['Xpointings'][idx_tmp]
 
             # time tages associated with indices
             times_tmp  = dataset.data['TimeTags'][idx_tmp]
@@ -1060,29 +945,26 @@ class Pointing():
                 self.ploop(xpoins_tmp, ypoins_tmp, zpoins_tmp, times_tmp, n_ph, \
                            dataset.data_delta_times[t], self.angle_threshold)     
                 
-            self.xpoins.append(save_xpoins)
-            self.ypoins.append(save_ypoins)
-            self.zpoins.append(save_zpoins)
-            self.dtpoins.append(save_times)
+            xpoins.append(save_xpoins)
+            ypoins.append(save_ypoins)
+            zpoins.append(save_zpoins)
+            dtpoins.append(save_times)
 
             #self._n_ph.append(n_ph)
             #self._n_pointings.append(len(save_f))
             #self._pointing_cuts.extend(save_f)
 
-        self.zpoins  = np.concatenate(self.zpoins)
-        self.ypoins  = np.concatenate(self.ypoins)
-        self.xpoins  = np.concatenate(self.xpoins)
-        self.dtpoins = np.concatenate(self.dtpoins)
-
-        # cumulative pointing times for resrponse weighting later
-        self.cdtpoins = np.cumsum(self.dtpoins)
+        self.zpoins  = np.concatenate(zpoins)
+        self.ypoins  = np.concatenate(ypoins)
+        self.xpoins  = np.concatenate(xpoins)
+        self.dtpoins = np.concatenate(dtpoins)
 
    
     @staticmethod
-    @njit
+    @njit(fastmath=True)
     def ploop(xpoins, ypoins, zpoins, times, n_ph, tdelta, angle_threshold):
 
-        cos_threshold = np.cos(np.deg2rad(angle_threshold))
+        cos_threshold = np.cos(angle_threshold)
 
         sort_idx = np.argsort(times)
         times  = times[sort_idx]
@@ -1094,7 +976,7 @@ class Pointing():
         saved_pts[0] = True
 
         i = 0
-        for f in range(1,n_ph):
+        for f in range(1, n_ph):
             # calculate angular distance in all 3 directions
             # (very important because non-circular response)
             dz = cos_angular_dist(zpoins[f,:], zpoins[i,:])
@@ -1105,7 +987,7 @@ class Pointing():
             # save the first trigger as average pointing
             # this is arbitrary and could be any point inside the block;
             # it only defines a point in which the stability is
-            # angle_threshold degrees.
+            # angle_threshold radians.
             if ((dz <= cos_threshold) | (dy <= cos_threshold) | (dx <= cos_threshold)) | (f == n_ph-1):
                 saved_pts[f] = True
                 i = f
@@ -1121,131 +1003,23 @@ class Pointing():
         return (save_xpoins, save_ypoins, save_zpoins, save_times)
 
 
-    def construct_pointings(self,dataset):
-        """
-        Construct a list of 'stable' pointings during a steadily moving COSI observation:
-        Depending on the angular threshold, a number of triggers is collected into one time bin,
-        making an average observation, Xpointing, Ypointing, ZPointing, during this time.
-        This defines the exposure time (not dead-time corrected) for a particular pointing.
-        TS: need a cleaner pointing definition from ori files (or auxiliary information)
-        :param:  COSI_Data.dataset  COSI data set dictionary from read_COSI_DataSet()
-        :option: angle_threshold    Default = 5 (deg): if COSI changes by more than angle_threshold, the accumulation
-                                    of triggers starts over, defining a new pointing.
-        
-        Output: xpoins,ypoins,zpoins,dtpoins
-        Pointings in x-, y-, z-direction, and observation time (interval) for each set of triggers.
-        TS Warning: there could be something wrong, but i don't see where
-        """
+@njit(fastmath=True)
+def cos_angular_dist(p1,p2):
+    """                                                                                                                                                        
+    Calculate cosine of angular distance on a sphere from one longitude/latitude pair to another using Great circle                                                      
+    in units of radians                                                                                                                                           
+    :param: l1    longitude of point 1                                                                                                                         
+    :param: b1    latitude of point 1                                                                                                                          
+    :param: l2    longitude of point 2                                                                                                                         
+    :param: b2    latitude of point 2                                                                                                                          
+    """
+    l1, b1, l2, b2 = p1[0], p1[1], p2[0], p2[1]
+
+    # calculate the Great Circle between the two points                                                                                                        
+    # this is a geodesic on a sphere and describes the shortest distance                                                                                       
+    gc = np.sin(b1)*np.sin(b2) + np.cos(b1)*np.cos(b2)*np.cos(l1-l2)
     
-        self.xpoins  = []
-        self.ypoins  = []
-        self.zpoins  = []
-        self.dtpoins = []
-
-        self._n_ph          = []
-        self._n_pointings   = []
-        self._pointing_cuts = []
-    
-        for t in range(dataset.n_time_bins):
-
-            # indices for this time bin
-            idx_tmp = dataset.data_time_tagged[t]['Indices']
-        
-            # get number of photons as number of indexed triggers
-            n_ph = len(idx_tmp)
-        
-            # temporary pointing coordinates of indexed events in deg
-            zpoins_tmp = np.rad2deg(dataset.data['Zpointings'][idx_tmp])
-            ypoins_tmp = np.rad2deg(dataset.data['Ypointings'][idx_tmp])
-            xpoins_tmp = np.rad2deg(dataset.data['Xpointings'][idx_tmp])
-        
-            # time tages associated with indices
-            times_tmp  = dataset.data['TimeTags'][idx_tmp]
-        
-            # sorting of times since, especially for simulations,
-            # the time stamps may be arbitrary and not in sequence
-            sort_idx = np.argsort(times_tmp)
-            # sort times and x/y/z coordinates according to that
-            times_tmp  = times_tmp[sort_idx]
-            zpoins_tmp = zpoins_tmp[sort_idx,:]
-            ypoins_tmp = ypoins_tmp[sort_idx,:]
-            xpoins_tmp = xpoins_tmp[sort_idx,:]
-        
-            # cross-check number of photons
-            n_ph2 = len(zpoins_tmp[:,0])
-        
-            if n_ph != n_ph2:
-                print('something went wrong ...; this should never happen here!')
-            else:
-            
-                # begin iterative combination of triggers up to angle_threshold
-                # first photon
-
-                # if no photon in time bin:
-                if n_ph == 0:
-
-                    save_zpoins = [[np.nan,np.nan]]
-                    save_ypoins = [[np.nan,np.nan]]
-                    save_xpoins = [[np.nan,np.nan]]
-                    save_times = []
-
-                else:
-                
-                    i = 0
-                    save_zpoins = [zpoins_tmp[i,:]]
-                    save_ypoins = [ypoins_tmp[i,:]]
-                    save_xpoins = [xpoins_tmp[i,:]]
-                    save_times = []
-                    save_f = [0]
-        
-                    # next photon wrt to first trigger in block
-                    for f in range(n_ph):
-                
-                        # calculate angular distance in all 3 directions
-                        # (very important because non-circular response)
-                        dz = angular_distance(zpoins_tmp[f,0],zpoins_tmp[f,1],
-                                              zpoins_tmp[i,0],zpoins_tmp[i,1])
-                        dy = angular_distance(ypoins_tmp[f,0],ypoins_tmp[f,1],
-                                              ypoins_tmp[i,0],ypoins_tmp[i,1])
-                        dx = angular_distance(xpoins_tmp[f,0],xpoins_tmp[f,1],
-                                              xpoins_tmp[i,0],xpoins_tmp[i,1])
-                
-                        # time bin (see warning above, and work-around below)
-                        dt = times_tmp[f]-times_tmp[i]
-                        # if any of the angles is greater than threshold,
-                        # save the first trigger as average pointing
-                        # this is arbitrary and could be any point inside the block;
-                        # it only defines a point in which the stability is
-                        # angle_threshold degrees.
-                        if ((dz >= self.angle_threshold) | (dy >= self.angle_threshold) | (dx >= self.angle_threshold)) | (f == n_ph-1):
-                            save_zpoins.append(zpoins_tmp[f,:])
-                            save_ypoins.append(ypoins_tmp[f,:])
-                            save_xpoins.append(xpoins_tmp[f,:])
-                            save_times.append(dt)
-                            save_f.append(f)
-                            # make last to first and repeat until all photons are inside
-                            i = f
-
-                    # append last time segment as delta between time bin edge and 
-                    # that was already accounted for
-                save_times.append(dataset.data_time_tagged[t]['DeltaTime']-np.sum(save_times)) 
-
-                self.xpoins.extend(save_xpoins)
-                self.ypoins.extend(save_ypoins)
-                self.zpoins.extend(save_zpoins)
-                self.dtpoins.extend(save_times)
-
-                self._n_ph.append(n_ph)
-                #self._n_pointings.append(len(save_f))
-                #self._pointing_cuts.extend(save_f)
-
-        self.zpoins  = np.array(self.zpoins)
-        self.ypoins  = np.array(self.ypoins)
-        self.xpoins  = np.array(self.xpoins)
-        self.dtpoins = np.array(self.dtpoins)
-        # cumulative pointing times for resrponse weighting later
-        self.cdtpoins = np.cumsum(self.dtpoins)
-
+    return np.minimum(gc, 1.)
 
 class BG():
 
@@ -1500,7 +1274,10 @@ class BG():
 
 
 
-# # misc. functions required for the stuff to work
+###############################################################
+# misc. functions required for original COSI-DC1 code to work
+###############################################################
+
 def minmax(x):
     """
     Return minimum and maximum of array
@@ -1557,44 +1334,6 @@ def construct_scy(scx_l, scx_b, scz_l, scz_b):
     
     #return cart2polar(np.cross(z.transpose(),x.transpose()).transpose()) # JITable alternative
     return cart2polar(np.cross(z,x,axis=0))
-
-
-@njit(fastmath=True)
-def cos_angular_dist(p1,p2):
-    """                                                                                                                                                        
-    Calculate cosine of angular distance on a sphere from one longitude/latitude pair to another using Great circle                                                      
-    in units of deg                                                                                                                                            
-    :param: l1    longitude of point 1                                                                                                                         
-    :param: b1    latitude of point 1                                                                                                                          
-    :param: l2    longitude of point 2                                                                                                                         
-    :param: b2    latitude of point 2                                                                                                                          
-    """
-    l1,b1,l2,b2 = np.deg2rad(p1[0]),np.deg2rad(p1[1]),np.deg2rad(p2[0]),np.deg2rad(p2[1])
-
-    # calculate the Great Circle between the two points                                                                                                        
-    # this is a geodesic on a sphere and describes the shortest distance                                                                                       
-    gc = np.sin(b1)*np.sin(b2) + np.cos(b1)*np.cos(b2)*np.cos(l1-l2)
-    if gc > 1.: gc = 1.
-    return gc
-
-
-@njit(fastmath=True)
-def angular_distance_scalar(l1,b1,l2,b2):
-    """                                                                                                                                                        
-    Calculate angular distance on a sphere from one longitude/latitude pair to another using Great circle                                                      
-    in units of deg                                                                                                                                            
-    :param: l1    longitude of point 1                                                                                                                         
-    :param: b1    latitude of point 1                                                                                                                          
-    :param: l2    longitude of point 2                                                                                                                         
-    :param: b2    latitude of point 2                                                                                                                          
-    """
-    l1,b1,l2,b2 = np.deg2rad(l1),np.deg2rad(b1),np.deg2rad(l2),np.deg2rad(b2)
-
-    # calculate the Great Circle between the two points                                                                                                        
-    # this is a geodesic on a sphere and describes the shortest distance                                                                                       
-    gc = np.sin(b1)*np.sin(b2) + np.cos(b1)*np.cos(b2)*np.cos(l1-l2)
-    if gc > 1.: gc = 1.
-    return np.rad2deg(np.arccos(gc))
 
 
 from COSIpy_tools_dc1 import GreatCircle

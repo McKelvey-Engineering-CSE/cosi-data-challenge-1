@@ -107,7 +107,7 @@ def zenaziGrid(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
                                                                       
 
 @njit(fastmath=True,parallel=True,nogil=True)
-def zenaziGrid_fast(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
+def zenaziGrid_fast(scx, scy, scz, src_l, src_b):
     """
     # from spimodfit zenazi function (with rotated axes (optical axis for COSI = z)
     # calculate angular distance wrt optical axis in zenith (theta) and
@@ -131,10 +131,10 @@ def zenaziGrid_fast(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
     :param: src_b      SOURCEgrid latitudes
     
     """
-    scx_l,scx_b = np.deg2rad(scx_l),np.deg2rad(scx_b)
-    scy_l,scy_b = np.deg2rad(scy_l),np.deg2rad(scy_b)
-    scz_l,scz_b = np.deg2rad(scz_l),np.deg2rad(scz_b)
-    src_l,src_b = np.deg2rad(src_l),np.deg2rad(src_b)
+    scx_l, scx_b = scx[:,0], scx[:,1] # longitude, latitude
+    scy_l, scy_b = scy[:,0], scy[:,1]
+    scz_l, scz_b = scz[:,0], scz[:,1]
+    src_l, src_b = src_l,    src_b
 
     theta = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
     phi   = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
@@ -144,34 +144,23 @@ def zenaziGrid_fast(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
             costheta = np.sin(scz_b[j]) * np.sin(src_b[i]) + np.cos(scz_b[j]) * np.cos(src_b[i]) * np.cos(scz_l[j] - src_l[i])
             cosx     = np.sin(scx_b[j]) * np.sin(src_b[i]) + np.cos(scx_b[j]) * np.cos(src_b[i]) * np.cos(scx_l[j] - src_l[i])
             cosy     = np.sin(scy_b[j]) * np.sin(src_b[i]) + np.cos(scy_b[j]) * np.cos(src_b[i]) * np.cos(scy_l[j] - src_l[i])
-            theta[i,j] = np.rad2deg(np.arccos(costheta))
-            phi[i,j]   = np.rad2deg(np.arctan2(cosx,cosy))
-            if phi[i,j] < 0: phi[i,j] += 360
+            theta[i,j] = np.arccos(costheta)
+            phi[i,j]   = np.arctan2(cosx,cosy)
+            if phi[i,j] < 0: phi[i,j] += 2*np.pi
     
     return theta, phi
 
 
-# JITable replacement for np.meshgrid() for 2D grids
-@njit(fastmath=True)
-def mymeshgrid(x, y):
-    xx = np.empty(shape=(y.size, x.size), dtype=x.dtype)
-    yy = np.empty(shape=(y.size, x.size), dtype=y.dtype)
-    for j in range(y.size):
-        for k in range(x.size):
-                xx[j,k] = x[k]
-                yy[j,k] = y[j]
-    return xx, yy
-
-
+#
 # Accelerated version of cashstat() log likelihood computation
+#
+
 @vectorize(['float64(float64, float64)'], nopython=True)
 def xlog(d,m):
     return 0. if d == 0 else (d * (1. + np.log(m/d)))
 
-@njit
+@njit(fastmath=True)
 def cashstat(data, model):
     data = data.ravel()
     model = model.ravel()
     return -2 * np.sum(xlog(data, model) - model)
-
-

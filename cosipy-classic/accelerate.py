@@ -2,7 +2,6 @@ from numba import jit, njit, prange
 import numpy as np
 import ROOT as M
 from numba.typed import List
-import numba
 
 @jit(fastmath=True, cache=True, nogil=True)
 def accel_read_COSI_DataSet(Reader, erg, tt, et,
@@ -175,29 +174,29 @@ def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
     return data_time_indices
 
 
+#
+# Construction of scaled response
+#
+
 @njit(fastmath=True,parallel=True,nogil=True)
-def get_image_response_from_pixelhit_general(Response, zenith, azimuth, cdtpoins, times_min, 
-                                             domega, dt, n_hours, n_ph_dx, binsize=6, cut=90,
-                                             altitude_correction=False, al=None):
+def get_image_response_from_pixelhit_general(Response, zenith, azimuth, dt, times_min, n_ph_dx,
+                                             domega, n_hours, pixel_size, cut):
+                                             #altitude_correction=False):
     """
     Get Compton response from hit pixel for each zenith/azimuth vector(!) input.
-    Binsize determines regular(!!!) sky coordinate grid in degrees.
+    Pixel_size determines regular(!!!) sky coordinate grid in degrees.
 
     :param: zenith        Zenith positions of all points of predefined sky grid with
-                          respect to the instrument (in deg)
+                          respect to the instrument (in rad)
     :param: azimuth       Azimuth positions of all points of predefined sky grid with
-                          respect to the instrument (in deg)
+                          respect to the instrument (in rad)
     :param: domega        Latitude weighting of pixels on sky grid
-    :option: binsize      Default 6 deg (matching the sky dimension of the response). If set
-                          differently, make sure it matches the sky dimension as otherwise,
-                          false results may be returned
+    :option: pizel_size   Size in *degrees* of each pixel in sky map
     :option: cut          Threshold to cut the response calculation after a certain zenith angle.
-                          Default 90
-    :param: n_hours       Number of hours in cdxervation
+    :param: n_hours       Number of hours in observation
     :option: altitude_correction Default False: use interpolated transmission probability, normalised to 33 km and 500 keV,
                           to modify number of expected photons as a function of altitude and zenith angle of cdxervation
-    :option: al           Altitude values according to dt from construct_pointings(); used of altitude_correction is set to True
-
+    
     Input assumptions:
      - cdtpoins is sorted in nondecreasing order, as it results from a cumsum() call in the dataset construction code.
      - times_min and times_max are lower and upper endpoints of time bins for Pointing data. Hence, times_max[i] = times_min[i+1].
@@ -205,35 +204,25 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, cdtpoins
     """
 
     # assuming useful input:
-    # azimuthal angle is periodic in the range [0,360[
-    # zenith ranges from [0,180[
+    # azimuthal angle is periodic in the range [0,2pi[
+    # zenith ranges from [0,pi[
   
-    zens = np.floor(zenith/binsize).astype(np.int32)
-    azis = np.floor(azimuth/binsize).astype(np.int32)
-        
-    n_l = int(360/binsize)
-    n_b = int(180/binsize)
+    zens = np.floor(np.rad2deg(zenith)/pixel_size).astype(np.int32)
+    azis = np.floor(np.rad2deg(azimuth)/pixel_size).astype(np.int32)
     
-    n_z = zenith.shape[2]
+    n_b = zens.shape[0] # map latitudes
+    n_l = zens.shape[1] # map longitudes
 
-    # take care of regular grid by applying weighting with latitude 
-    weights = domega.repeat(n_z).reshape(n_b, n_l, n_z) * dt
+    # remove zeniths for which the pixel center is above the threshold    
+    z_thresh = int(cut/pixel_size - 0.5)
     
-    # remove zeniths for which the pixel center is above the threshold
-    # (this line rewritten to work with Numba JIT)
-    weights = np.where(zens > cut/binsize - 0.5, 0., weights)
-
-    # check for negative indices and remove
+    # check zens, azis for negative indices and do not use those entries in computing response.
     # NB: zeniths and azimuths are computed by zenazigrid.  The zeniths are outputs of 
-    # arccos() and so lie in the range 0..2pi (before conversionto degrees and pixel IDs, 
+    # arccos() and so lie in the range 0..2pi (before conversion to degrees and pixel IDs, 
     # which cannot change the sign).  The azimuths are explicitly converted to be non-negative.
-    # So this code is a no-op. - JDB
-    #weights[zens < 0] = 0.
-    #weights[azis < 0] = 0.
-    #zens[zens < 0] = 0
-    #azis[azis < 0] = 0
-    
-    # Not presently used
+    # So this test is a no-op. - JDB
+        
+    # Not used in DC1
     #if altitude_correction == True:
     #    altitude_response = return_altitude_response()
     #else:
@@ -243,16 +232,18 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, cdtpoins
     # get responses at pixels
     #
 
+    cdt = np.cumsum(dt)
+    
     # Elts associated with jth time bin have values > times_min[j] and <= times_max[j].
     # But there are no elts with value > times_max[j] and < times_min[j+1].
     # Hence, indices for jth bin are bmins[j] .. bmins[j+1] - 1, inclusive.
-    bmins = np.searchsorted(cdtpoins, times_min[n_ph_dx], 'right') # least i with value > times_min
+    bmins = np.searchsorted(cdt, times_min[n_ph_dx], 'right') # least i with value > times_min
 
-    # Add end of cdtpoins array as sentinel to close last bin range.
-    bmins = np.append(bmins, cdtpoins.size)
+    # Add end of cdt array as sentinel to close last bin range.
+    bmins = np.append(bmins, cdt.size)
 
     image_response = np.empty((n_hours, n_b, n_l, Response.shape[2]), dtype=np.float32)
-
+        
     for c in prange(n_hours):
         
         acc = np.empty(Response.shape[2], dtype=np.float64)
@@ -261,10 +252,43 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, cdtpoins
             for LON in range(n_l):
                 acc[:] = 0.
                 for v in range(bmins[c], bmins[c+1]):
-                    acc += Response[zens[LAT,LON,v], azis[LAT,LON,v], :] * weights[LAT,LON,v] # accumulate in 64 bits
+                    z = zens[LAT, LON, v]
+                    
+                    if z <= z_thresh:
+                        acc += Response[z, azis[LAT,LON,v], :] * domega[LAT] * dt[v] # accumulate in 64 bits
+                        
                 image_response[c,LAT,LON,:] = acc
 
     return image_response
+
+
+#
+# Construction of expo_map from scaled response
+#
+
+# mostly loop-nested version of expo map computation.
+@njit(fastmath=True,parallel=True,nogil=True)
+def emap_fast(response, n_b, n_l):
+    expo_map = np.empty((n_b, n_l))
+    n_i = response.shape[0]
+    n_j = response.shape[3]
+
+    for x in prange(n_b):
+        for y in range(n_l):
+            expo_map[x,y] = 0
+            for i in range(n_i):
+                for j in range(n_j):
+                    expo_map[x,y] += response[i,x,y,j]
+                
+    return expo_map
+
+# original expo_map computation
+def emap(response, n_b, n_l):
+    expo_map = np.zeros((n_b, n_l))
+
+    for i in range(response.shape[0]):
+        expo_map += np.sum(response[i,:,:,:], axis=2)
+    return expo_map
 
 
 ##############################################################################
@@ -297,10 +321,8 @@ def convolve(D, M, nd_x, nd_y, nm_x, nm_y):
     return R
     
 # Iterate in the storage order of the large D matrix
-# for maximum locality.  Do NOT enable fastmath -- this
-# is a very large sum, and parallelizing substantially
-# changes the result.
-@njit(parallel=True,nogil=True)
+# for maximum locality.
+@njit(fastmath=True,parallel=True,nogil=True)
 def convdelta_fast(D, Wnum, Wden, n_dx, n_dy, n_wx, n_wy):
     W = Wnum/Wden - 1.
 
@@ -323,28 +345,3 @@ def convdelta(D, Wnum, Wden, n_dx, n_dy, n_wx, n_wy):
         for j in range(n_wy):
             R += D[i,:,:,j] * W[i,j]
     return R
-
-# mostly loop-nested version of expo map computation.
-@njit(fastmath=True,parallel=True,nogil=True)
-def emap_fast(response, n_b, n_l):
-    expo_map = np.empty((n_b, n_l))
-    n_i = response.shape[0]
-    n_j = response.shape[3]
-
-    for x in prange(n_b):
-        for y in range(n_l):
-            expo_map[x,y] = 0
-            for i in range(n_i):
-                for j in range(n_j):
-                    expo_map[x,y] += response[i,x,y,j]
-                
-    return expo_map
-
-# original expo_map computation
-def emap(response, n_b, n_l):
-    expo_map = np.zeros((n_b, n_l))
-
-    for i in range(response.shape[0]):
-        expo_map += np.sum(response[i,:,:,:], axis=2)
-    return expo_map
-
