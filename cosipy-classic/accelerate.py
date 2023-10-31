@@ -255,9 +255,9 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, dt, time
                     z = zens[LAT, LON, v]
                     
                     if z <= z_thresh:
-                        acc += Response[z, azis[LAT,LON,v], :] * domega[LAT] * dt[v] # accumulate in 64 bits
+                        acc += Response[z, azis[LAT,LON,v], :] * dt[v] # accumulate in 64 bits
                         
-                image_response[c,LAT,LON,:] = acc
+                image_response[c,LAT,LON,:] = acc * domega[LAT]
 
     return image_response
 

@@ -1,8 +1,6 @@
 import os
 import sparse
 import numpy as np
-import jax.numpy as jnp
-from numba import jit, njit
 import matplotlib.pyplot as plt
 
 from tqdm.autonotebook import tqdm
