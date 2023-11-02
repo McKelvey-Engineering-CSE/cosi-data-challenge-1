@@ -59,8 +59,6 @@ def accel_read_COSI_DataSet(Reader, erg, tt, et,
             chi_gal.append(v.Phi())
             # gal longitude angle corresponding to chi
             psi_gal.append(v.Theta())
-        
-    print(f"num erg entries = {len(erg)}")
 
 
 @njit(fastmath=True, parallel=True, nogil=True)
@@ -121,7 +119,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
                                     (erg_tmp_fisbel <= energy_bin_edges[e+1]))[0]
                             
             binned_data[ph_dx, e, :, f] = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)[0]
-            
+
 
 @njit(fastmath=True, parallel=True, nogil=True)
 def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
