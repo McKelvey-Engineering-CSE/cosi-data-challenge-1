@@ -119,6 +119,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
                                     (erg_tmp_fisbel <= energy_bin_edges[e+1]))[0]
                             
             binned_data[ph_dx, e, :, f] = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)[0]
+    return binned_data
 
 
 @njit(fastmath=True, parallel=True, nogil=True)
