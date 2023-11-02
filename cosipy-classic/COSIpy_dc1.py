@@ -49,6 +49,8 @@ class COSIpy:
 
         # check if file exists
         Reader = M.MFileEventsTra()
+        M.SetOwnership(Reader,True)  # make sure reader is deleted when we are done with it
+        
         if Reader.Open(M.MString(self.data_dir+'/'+self.filename)) == False:
             print("Unable to open file " + self.data_dir+'/'+self.filename + ". Aborting!")
 

@@ -3,11 +3,11 @@ import numpy as np
 import ROOT as M
 from numba.typed import List
 
-@jit(fastmath=True, cache=True, nogil=True)
+@jit(fastmath=True)
 def accel_read_COSI_DataSet(Reader, erg, tt, et,
                             latX, lonX, latZ, lonZ, phi,
                             chi_loc, psi_loc, dist,
-                            chi_gal, psi_gal, n_events) :
+                            chi_gal, psi_gal) :
     
     # browse through .tra file, select events, and sort into corresponding list
     while True:
@@ -59,6 +59,8 @@ def accel_read_COSI_DataSet(Reader, erg, tt, et,
             chi_gal.append(v.Phi())
             # gal longitude angle corresponding to chi
             psi_gal.append(v.Theta())
+        
+    print(f"num erg entries = {len(erg)}")
 
 
 @njit(fastmath=True, parallel=True, nogil=True)
@@ -71,7 +73,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
     
     # init data array
     binned_data = np.empty((n_ph, n_energy_bins,
-                            n_phi_bins, n_fisbel_bins), dtype = np.int32)
+                            n_phi_bins, n_fisbel_bins), dtype = np.uint32)
 
     # Loop over time bins with events
     for ph_dx in prange(n_ph) :
@@ -119,9 +121,7 @@ def accel_get_binned_data(n_ph, n_ph_dx,
                                     (erg_tmp_fisbel <= energy_bin_edges[e+1]))[0]
                             
             binned_data[ph_dx, e, :, f] = np.histogram(phi_tmp_fisbel[energy_idx_tmp], bins = phi_edges)[0]
-
-    return binned_data
-
+            
 
 @njit(fastmath=True, parallel=True, nogil=True)
 def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
@@ -179,16 +179,14 @@ def accel_time_binning_tags(n_time_bins, time_bin_size, last_bin_size,
 #
 
 @njit(fastmath=True,parallel=True,nogil=True)
-def get_image_response_from_pixelhit_general(Response, zenith, azimuth, dt, times_min, n_ph_dx,
+def get_image_response_from_pixelhit_general(Response, coords, dt, times_min, n_ph_dx,
                                              domega, n_hours, pixel_size, cut):
                                              #altitude_correction=False):
     """
     Get Compton response from hit pixel for each zenith/azimuth vector(!) input.
     Pixel_size determines regular(!!!) sky coordinate grid in degrees.
 
-    :param: zenith        Zenith positions of all points of predefined sky grid with
-                          respect to the instrument (in rad)
-    :param: azimuth       Azimuth positions of all points of predefined sky grid with
+    :param: coords        [zenit, azimuth] positions of all points of predefined sky grid with
                           respect to the instrument (in rad)
     :param: domega        Latitude weighting of pixels on sky grid
     :option: pizel_size   Size in *degrees* of each pixel in sky map
@@ -203,25 +201,16 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, dt, time
      - n_ph_dx gives the indices of the time bins with > 0 data items to be processed in the loop.  There are n_hours such nonempty bins.
     """
 
-    # assuming useful input:
-    # azimuthal angle is periodic in the range [0,2pi[
-    # zenith ranges from [0,pi[
-  
-    zens = np.floor(np.rad2deg(zenith)/pixel_size).astype(np.int32)
-    azis = np.floor(np.rad2deg(azimuth)/pixel_size).astype(np.int32)
-    
-    n_b = zens.shape[0] # map latitudes
-    n_l = zens.shape[1] # map longitudes
+    # zeniths and azimuths in coords are computed by zenazigrid.  The zeniths are outputs of 
+    # arccos() and so lie in the range 0..2pi (before conversion to degrees and pixel IDs, 
+    # which cannot change the sign).  The azimuths are explicitly converted to be non-negative.
+      
+    n_b = coords.shape[0] # map latitudes
+    n_l = coords.shape[1] # map longitudes
 
     # remove zeniths for which the pixel center is above the threshold    
     z_thresh = int(cut/pixel_size - 0.5)
     
-    # check zens, azis for negative indices and do not use those entries in computing response.
-    # NB: zeniths and azimuths are computed by zenazigrid.  The zeniths are outputs of 
-    # arccos() and so lie in the range 0..2pi (before conversion to degrees and pixel IDs, 
-    # which cannot change the sign).  The azimuths are explicitly converted to be non-negative.
-    # So this test is a no-op. - JDB
-        
     # Not used in DC1
     #if altitude_correction == True:
     #    altitude_response = return_altitude_response()
@@ -252,10 +241,10 @@ def get_image_response_from_pixelhit_general(Response, zenith, azimuth, dt, time
             for LON in range(n_l):
                 acc[:] = 0.
                 for v in range(bmins[c], bmins[c+1]):
-                    z = zens[LAT, LON, v]
+                    z, a = coords[LAT, LON, v] # zenith, azimuth
                     
                     if z <= z_thresh:
-                        acc += Response[z, azis[LAT,LON,v], :] * dt[v] # accumulate in 64 bits
+                        acc += Response[z, a, :] * dt[v] # accumulate in 64 bits
                         
                 image_response[c,LAT,LON,:] = acc * domega[LAT]
 

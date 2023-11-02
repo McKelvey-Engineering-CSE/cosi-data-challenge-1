@@ -107,7 +107,7 @@ def zenaziGrid(scx_l, scx_b, scy_l, scy_b, scz_l, scz_b, src_l, src_b):
                                                                       
 
 @njit(fastmath=True,parallel=True,nogil=True)
-def zenaziGrid_fast(scx, scy, scz, src_l, src_b):
+def zenaziGrid_fast(scx, scy, scz, src_l, src_b, pixel_size):
     """
     # from spimodfit zenazi function (with rotated axes (optical axis for COSI = z)
     # calculate angular distance wrt optical axis in zenith (theta) and
@@ -136,19 +136,23 @@ def zenaziGrid_fast(scx, scy, scz, src_l, src_b):
     scz_l, scz_b = scz[:,0], scz[:,1]
     src_l, src_b = src_l,    src_b
 
-    theta = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
-    phi   = np.empty(shape=(src_l.size, scx_l.size), dtype=src_l.dtype)
+    # each entry is [theta, phi]
+    coords = np.empty((src_l.size, scx_l.size, 2), dtype=np.uint16)
 
     for i in prange(src_l.size):
         for j in range(scx_l.size):
             costheta = np.sin(scz_b[j]) * np.sin(src_b[i]) + np.cos(scz_b[j]) * np.cos(src_b[i]) * np.cos(scz_l[j] - src_l[i])
             cosx     = np.sin(scx_b[j]) * np.sin(src_b[i]) + np.cos(scx_b[j]) * np.cos(src_b[i]) * np.cos(scx_l[j] - src_l[i])
             cosy     = np.sin(scy_b[j]) * np.sin(src_b[i]) + np.cos(scy_b[j]) * np.cos(src_b[i]) * np.cos(scy_l[j] - src_l[i])
-            theta[i,j] = np.arccos(costheta)
-            phi[i,j]   = np.arctan2(cosx,cosy)
-            if phi[i,j] < 0: phi[i,j] += 2*np.pi
+            theta = np.arccos(costheta)
+            phi   = np.arctan2(cosx,cosy)
+            if phi < 0: phi += 2*np.pi
+
+            # convert to pixel indices in grid (truncate to integer)
+            coords[i,j,0] = np.rad2deg(theta)/pixel_size
+            coords[i,j,1] = np.rad2deg(phi)/pixel_size
     
-    return theta, phi
+    return coords
 
 
 #
